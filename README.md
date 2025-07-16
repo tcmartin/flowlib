@@ -1,6 +1,5 @@
 # **Flowlib – 1-file Go workflow & agent runtime**
 
-English | 中文 | Español | 日本語 | Deutsch | Русский | Português | Français | 한국어
 
 License: MIT   |   [Docs (→ WIP)](#documentation)
 
