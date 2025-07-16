@@ -33,10 +33,10 @@ Current workflow / agent frameworks in the Go ecosystem range from “feature-ri
 
 ```bash
 # OPTION 1 – Go modules
-go get github.com/yourorg/flowlib@latest
+go get github.com/tcmartin/flowlib@latest
 
 # OPTION 2 – Copy‑paste
-curl -L https://raw.githubusercontent.com/yourorg/flowlib/main/flowlib.go \
+curl -L https://raw.githubusercontent.com/tcmartin/flowlib/main/flowlib.go \
      -o flowlib.go
 ```
 
@@ -47,7 +47,7 @@ import (
     "context"
     "fmt"
 
-    "github.com/yourorg/flowlib"
+    "github.com/tcmartin/flowlib"
 )
 
 /*------- a tiny concrete node -------*/
