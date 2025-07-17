@@ -1,0 +1,146 @@
+package flowlib
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+/* ---------- helper: capture stdout ---------- */
+func capture(f func()) string {
+	orig := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	f()
+	w.Close()
+	out, _ := io.ReadAll(r)
+	os.Stdout = orig
+	return string(out)
+}
+
+/* ---------- concrete nodes for tests ---------- */
+
+// Echo prints a fixed message; Params not used.
+type Echo struct {
+	*NodeWithRetry
+	msg string
+	w   io.Writer
+}
+
+func NewEcho(msg string, w io.Writer) *Echo {
+	e := &Echo{NodeWithRetry: NewNode(1, 0), msg: msg, w: w}
+	e.execFn = e.Exec
+	return e
+}
+func (e *Echo) Exec(any) (any, error) {
+	if e.w == nil {
+		e.w = os.Stdout
+	}
+	fmt.Fprintln(e.w, e.msg)
+	return nil, nil
+}
+
+// Flaky fails N times, then succeeds.
+type Flaky struct {
+	*NodeWithRetry
+	failCount int32
+	maxFail   int32
+	w         io.Writer
+}
+
+func NewFlaky(maxFail int32, w io.Writer) *Flaky {
+	f := &Flaky{NodeWithRetry: NewNode(int(maxFail)+1, 0), maxFail: maxFail, w: w}
+	f.execFn = f.Exec
+	return f
+}
+
+func (f *Flaky) Exec(any) (any, error) {
+	if atomic.AddInt32(&f.failCount, 1) <= f.maxFail {
+		return nil, errors.New("boom")
+	}
+	if f.w == nil {
+		f.w = os.Stdout
+	}
+	fmt.Fprintln(f.w, "success after retries")
+	return nil, nil
+}
+
+// NumbersWP processes a batch with worker-pool concurrency.
+type NumbersWP struct {
+	*WorkerPoolBatchNode
+	counter atomic.Int32
+}
+
+func NewNumbersWP(maxPar int) *NumbersWP {
+	n := &NumbersWP{WorkerPoolBatchNode: NewWorkerPoolBatchNode(1, 0, maxPar)}
+	n.WorkerPoolBatchNode.asyncNode.execAsyncFn = n.ExecAsync
+	n.WorkerPoolBatchNode.asyncNode.NodeWithRetry.prepFn = n.Prep
+	return n
+}
+func (n *NumbersWP) Prep(any) (any, error) {
+	return []any{1, 2, 3, 4}, nil
+}
+func (n *NumbersWP) ExecAsync(ctx context.Context, v any) (any, error) {
+	time.Sleep(10 * time.Millisecond)
+	n.counter.Add(1)
+	println("item", v.(int))
+	return v, nil
+}
+
+/* ---------- TESTS ---------- */
+
+func TestSyncFlow(t *testing.T) {
+	var buf bytes.Buffer
+	out := capture(func() {
+		a, b := NewEcho("Hello", &buf), NewEcho("World!", &buf)
+		a.Then(b)
+		if _, err := NewFlow(a).Run(nil); err != nil {
+			t.Fatalf("sync flow error: %v", err)
+		}
+	})
+	if want := "Hello\nWorld!\n"; buf.String() != want {
+		t.Fatalf("unexpected stdout: %q", out)
+	}
+}
+
+func TestRetry(t *testing.T) {
+	var buf bytes.Buffer
+	out := capture(func() {
+		flaky := NewFlaky(2, &buf) // fail twice
+		if _, err := flaky.Run(nil); err != nil {
+			t.Fatalf("retry logic failed: %v", err)
+		}
+	})
+	if !bytes.Contains(buf.Bytes(), []byte("success after retries")) {
+		t.Fatalf("fallback not reached: %q", out)
+	}
+}
+
+func TestWorkerPoolBatch(t *testing.T) {
+	wp := NewNumbersWP(2)
+	ctx := context.Background()
+	res := <-NewAsyncFlow(wp).RunAsync(ctx, nil)
+	if res.Err != nil {
+		t.Fatalf("worker pool flow error: %v", res.Err)
+	}
+	if got := wp.counter.Load(); got != 4 {
+		t.Fatalf("expected 4 items processed, got %d", got)
+	}
+}
+
+func TestCancelAsync(t *testing.T) {
+	wp := NewNumbersWP(1)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	res := <-NewAsyncFlow(wp).RunAsync(ctx, nil)
+	if res.Err == nil {
+		t.Fatalf("expected context cancellation error")
+	}
+}
+
