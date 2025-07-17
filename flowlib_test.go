@@ -313,3 +313,70 @@ func TestMissingSuccessorWarning(t *testing.T) {
 		t.Fatalf("unexpected output: %q", buf.String())
 	}
 }
+func TestParamPropagationAndIsolation(t *testing.T) {
+	// Create two nodes with different parameters
+	nodeA := NewNode(1, 0)
+	nodeB := NewNode(1, 0)
+
+	// Set different parameters for each node
+	nodeA.SetParams(map[string]any{
+		"name": "Alice",
+		"age":  30,
+	})
+	nodeB.SetParams(map[string]any{
+		"name": "Bob",
+		"role": "developer",
+	})
+
+	// Connect the nodes
+	nodeA.Then(nodeB)
+
+	// Verify that each node has its own parameters
+	if name, ok := nodeA.Params()["name"]; !ok || name != "Alice" {
+		t.Fatalf("expected nodeA to have name=Alice, got %v", name)
+	}
+	if age, ok := nodeA.Params()["age"]; !ok || age != 30 {
+		t.Fatalf("expected nodeA to have age=30, got %v", age)
+	}
+
+	if name, ok := nodeB.Params()["name"]; !ok || name != "Bob" {
+		t.Fatalf("expected nodeB to have name=Bob, got %v", name)
+	}
+	if role, ok := nodeB.Params()["role"]; !ok || role != "developer" {
+		t.Fatalf("expected nodeB to have role=developer, got %v", role)
+	}
+
+	// Modify nodeA's parameters and verify nodeB is not affected
+	nodeA.SetParams(map[string]any{
+		"name": "Alice Modified",
+		"age":  31,
+	})
+
+	if name, ok := nodeA.Params()["name"]; !ok || name != "Alice Modified" {
+		t.Fatalf("expected nodeA to have updated name=Alice Modified, got %v", name)
+	}
+
+	if name, ok := nodeB.Params()["name"]; !ok || name != "Bob" {
+		t.Fatalf("expected nodeB to still have name=Bob, got %v", name)
+	}
+
+	// Run the flow to ensure parameters are accessible during execution
+	var capturedParams map[string]any
+	nodeB.execFn = func(any) (any, error) {
+		capturedParams = nodeB.Params()
+		return nil, nil
+	}
+
+	_, err := NewFlow(nodeA).Run(nil)
+	if err != nil {
+		t.Fatalf("flow execution failed: %v", err)
+	}
+
+	// Verify that the parameters were accessible during execution
+	if capturedParams["name"] != "Bob" {
+		t.Fatalf("expected to capture name=Bob during execution, got %v", capturedParams["name"])
+	}
+	if capturedParams["role"] != "developer" {
+		t.Fatalf("expected to capture role=developer during execution, got %v", capturedParams["role"])
+	}
+}
