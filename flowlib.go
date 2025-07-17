@@ -24,7 +24,7 @@ type Action = string
 
 const DefaultAction Action = "default"
 
-func warn(msg string, a ...any) { fmt.Printf("⚠️  "+msg+"\n", a...) }
+var warn = func(msg string, a ...any) { fmt.Printf("⚠️  "+msg+"\n", a...) }
 
 func max(a, b int) int {
 	if a > b {

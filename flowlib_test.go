@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -271,5 +272,44 @@ func TestConditionalBranching(t *testing.T) {
 	expected := "Node A\nNode C\n"
 	if buf.String() != expected {
 		t.Fatalf("expected output %q, got %q", expected, buf.String())
+	}
+}
+func TestMissingSuccessorWarning(t *testing.T) {
+	var buf bytes.Buffer
+
+	// Create a node that returns a non-default action
+	node := NewNode(1, 0)
+	node.execFn = func(any) (any, error) {
+		return "missing_action", nil
+	}
+	node.baseNode.postFn = func(shared, p, e any) (Action, error) {
+		return e.(string), nil
+	}
+
+	// Add a successor for a different action
+	node.Next("some_other_action", NewEcho("This should not run", &buf))
+
+	// Capture the warning output
+	var warnOutput string
+	origWarnFn := warn
+	defer func() { warn = origWarnFn }()
+	warn = func(msg string, a ...any) {
+		warnOutput = fmt.Sprintf(msg, a...)
+	}
+
+	// Run the flow - it should end after the first node
+	_, err := NewFlow(node).Run(nil)
+	if err != nil {
+		t.Fatalf("flow execution failed: %v", err)
+	}
+
+	// Verify that a warning was emitted
+	if !strings.Contains(warnOutput, "missing_action") {
+		t.Fatalf("expected warning about missing action, got: %q", warnOutput)
+	}
+
+	// Verify that the buffer is empty (successor was not executed)
+	if buf.String() != "" {
+		t.Fatalf("unexpected output: %q", buf.String())
 	}
 }
