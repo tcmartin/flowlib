@@ -1,6 +1,5 @@
 # **Flowlib – 1-file Go workflow & agent runtime**
 
-
 License: MIT   |   [Docs (→ WIP)](#documentation)
 
 ---
@@ -18,14 +17,14 @@ License: MIT   |   [Docs (→ WIP)](#documentation)
 
 ## ✨ Why Flowlib?
 
-Current workflow / agent frameworks in the Go ecosystem range from “feature-rich but heavy” to “hard-wired to one vendor”.
-**You rarely need 100 000+ lines to run a DAG.** Flowlib keeps the *essential abstraction* – **Graph of Nodes** – and nothing else.
+Current workflow / agent frameworks in the Go ecosystem range from "feature-rich but heavy" to "hard-wired to one vendor".
+**You rarely need 100 000+ lines to run a DAG.** Flowlib keeps the *essential abstraction* – **Graph of Nodes** – and nothing else.
 
 | Framework   | Core Abstraction | Vendor-specific shims   | LOC (≈) | Binary size (≈) |
 | ----------- | ---------------- | ----------------------- | ------- | --------------- |
-| *Popular X* | Engine, Plugins  | Many (AWS, GCP, etc.)   | 55 k    | 60 MB           |
-| *Popular Y* | DAG, Agents      | Many (OpenAI, Pinecone) | 12 k    | 45 MB           |
-| **Flowlib** | Graph            | **None**                | **350** | **< 400 kB**    |
+| *Popular X* | Engine, Plugins  | Many (AWS, GCP, etc.)   | 55 k    | 60 MB           |
+| *Popular Y* | DAG, Agents      | Many (OpenAI, Pinecone) | 12 k    | 45 MB           |
+| **Flowlib** | Graph            | **None**                | **350** | **< 400 kB**    |
 
 ---
 
@@ -56,6 +55,7 @@ type Echo struct{ *flowlib.NodeWithRetry }
 func NewEcho(msg string) *Echo {
     e := &Echo{flowlib.NewNode(1, 0)}
     e.SetParams(map[string]any{"msg": msg})
+    e.execFn = e.Exec
     return e
 }
 func (e *Echo) Exec(any) (any, error) {
@@ -71,10 +71,10 @@ func main() {
 
     ctx := context.Background()
     wp := flowlib.NewWorkerPoolBatchNode(3, 0, 32) // bounded‑parallel batch
-    wp.PrepAsync = func(ctx context.Context, _ any) (any, error) {
+    wp.asyncNode.prepFn = func(any) (any, error) {
         return []any{1, 2, 3, 4}, nil
     }
-    wp.ExecAsync = func(ctx context.Context, v any) (any, error) {
+    wp.asyncNode.execAsyncFn = func(ctx context.Context, v any) (any, error) {
         fmt.Println("item", v)
         return v, nil
     }
@@ -94,9 +94,28 @@ func main() {
 | **BatchNode**                  | +15   | Serial map over `[]any`.                       |
 | **AsyncNode**                  | +90   | Goroutine/`context`‑based async, cancel‑safe.  |
 | **AsyncParallelBatchNode**     | +25   | Full fan‑out (`goroutine per item`).           |
-| **WorkerPoolBatchNode**        | +60   | **NEW** – bounded pool for huge batches.       |
+| **WorkerPoolBatchNode**        | +60   | Bounded pool for huge batches.                 |
 | **Flow / AsyncFlow**           | +80   | Orchestrator, conditional branching by action. |
 | *Helpers* (`Result`, `max`, …) | +10   | Misc utilities.                                |
+
+---
+
+## 🧪 Test Coverage
+
+All core functionality is covered by comprehensive tests:
+
+| Feature                    | Test                             | Status |
+| -------------------------- | -------------------------------- | ------ |
+| **Sync traversal**         | `TestSyncFlow`                   | ✅     |
+| **Retry logic**            | `TestRetry`                      | ✅     |
+| **BatchNode (serial)**     | `TestBatchNodeSerial`            | ✅     |
+| **AsyncBatchNode**         | `TestAsyncBatchNodeSerial`       | ✅     |
+| **AsyncParallelBatchNode** | `TestAsyncParallelBatchNodeFanOut` | ✅   |
+| **Worker‑pool batch**      | `TestWorkerPoolBatch`            | ✅     |
+| **Async cancellation**     | `TestCancelAsync`                | ✅     |
+| **Conditional branching**  | `TestConditionalBranching`       | ✅     |
+| **Missing successor warning** | `TestMissingSuccessorWarning` | ✅     |
+| **Param propagation**      | `TestParamPropagationAndIsolation` | ✅   |
 
 ---
 
@@ -135,7 +154,6 @@ func main() {
 
 ## ⭐ Acknowledgements
 
-Flowlib’s philosophy is inspired by the [Pocket Flow](https://github.com/pocket-flow/pocket-flow) 100‑line Python framework: keep the core tiny, let creativity bloom on top.
+Flowlib's philosophy is inspired by the [Pocket Flow](https://github.com/pocket-flow/pocket-flow) 100‑line Python framework: keep the core tiny, let creativity bloom on top.
 
 Made with ☕ and Gopher spirit.
-

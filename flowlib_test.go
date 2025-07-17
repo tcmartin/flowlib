@@ -362,6 +362,9 @@ func TestParamPropagationAndIsolation(t *testing.T) {
 
 	// Run the flow to ensure parameters are accessible during execution
 	var capturedParams map[string]any
+	nodeA.execFn = func(any) (any, error) {
+		return nil, nil // Just return success
+	}
 	nodeB.execFn = func(any) (any, error) {
 		capturedParams = nodeB.Params()
 		return nil, nil
