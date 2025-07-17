@@ -144,98 +144,132 @@ func TestCancelAsync(t *testing.T) {
 	}
 }
 func TestBatchNodeSerial(t *testing.T) {
-    input := []any{1, 2, 3}
-    // create a BatchNode and inject a doubling execFn
-    node := NewBatchNode(1, 0)
-    node.execFn = func(x any) (any, error) {
-        i, ok := x.(int)
-        if !ok {
-            t.Fatalf("expected int, got %T", x)
-        }
-        return i * 2, nil
-    }
+	input := []any{1, 2, 3}
+	// create a BatchNode and inject a doubling execFn
+	node := NewBatchNode(1, 0)
+	node.execFn = func(x any) (any, error) {
+		i, ok := x.(int)
+		if !ok {
+			t.Fatalf("expected int, got %T", x)
+		}
+		return i * 2, nil
+	}
 
-    // call the internal exec method directly
-    result, err := node.exec(input)
-    if err != nil {
-        t.Fatal(err)
-    }
+	// call the internal exec method directly
+	result, err := node.exec(input)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-    // verify the result is a []any with each element doubled
-    arr, ok := result.([]any)
-    if !ok {
-        t.Fatalf("expected []any, got %T", result)
-    }
-    for i, v := range arr {
-        want := (i + 1) * 2
-        if v.(int) != want {
-            t.Errorf("at index %d: got %v, want %v", i, v, want)
-        }
-    }
+	// verify the result is a []any with each element doubled
+	arr, ok := result.([]any)
+	if !ok {
+		t.Fatalf("expected []any, got %T", result)
+	}
+	for i, v := range arr {
+		want := (i + 1) * 2
+		if v.(int) != want {
+			t.Errorf("at index %d: got %v, want %v", i, v, want)
+		}
+	}
 }
 func TestAsyncBatchNodeSerial(t *testing.T) {
-    // we'll count how many items get processed
-    var processed int32
-    node := NewAsyncBatchNode(1, 0)
+	// we'll count how many items get processed
+	var processed int32
+	node := NewAsyncBatchNode(1, 0)
 
-    // prep returns a slice of 3 ints
-    node.asyncNode.prepFn = func(_ any) (any, error) {
-        return []any{1, 2, 3}, nil
-    }
-    // execAsyncFn increments the counter
-    node.asyncNode.execAsyncFn = func(ctx context.Context, v any) (any, error) {
-        atomic.AddInt32(&processed, 1)
-        return nil, nil
-    }
+	// prep returns a slice of 3 ints
+	node.asyncNode.prepFn = func(_ any) (any, error) {
+		return []any{1, 2, 3}, nil
+	}
+	// execAsyncFn increments the counter
+	node.asyncNode.execAsyncFn = func(ctx context.Context, v any) (any, error) {
+		atomic.AddInt32(&processed, 1)
+		return nil, nil
+	}
 
-    // run the node directly as an AsyncNode
-    res := <-node.RunAsync(context.Background(), nil)
-    if res.Err != nil {
-        t.Fatalf("unexpected error: %v", res.Err)
-    }
-    if processed != 3 {
-        t.Fatalf("expected 3 items processed, got %d", processed)
-    }
+	// run the node directly as an AsyncNode
+	res := <-node.RunAsync(context.Background(), nil)
+	if res.Err != nil {
+		t.Fatalf("unexpected error: %v", res.Err)
+	}
+	if processed != 3 {
+		t.Fatalf("expected 3 items processed, got %d", processed)
+	}
 }
 func TestAsyncParallelBatchNodeFanOut(t *testing.T) {
-    var maxSeen atomic.Int32
-    var inFlight atomic.Int32
+	var maxSeen atomic.Int32
+	var inFlight atomic.Int32
 
-    node := NewAsyncParallelBatchNode(1, 0)
-    // prep yields 5 items
-    node.asyncNode.prepFn = func(_ any) (any, error) {
-        return []any{1, 2, 3, 4, 5}, nil
-    }
-    // execAsyncFn tracks parallelism
-    node.asyncNode.execAsyncFn = func(ctx context.Context, v any) (any, error) {
-        cur := inFlight.Add(1)
-        if cur > maxSeen.Load() {
-            maxSeen.Store(cur)
-        }
-        // simulate work
-        time.Sleep(20 * time.Millisecond)
-        inFlight.Add(-1)
-        return v.(int) * 2, nil
-    }
+	node := NewAsyncParallelBatchNode(1, 0)
+	// prep yields 5 items
+	node.asyncNode.prepFn = func(_ any) (any, error) {
+		return []any{1, 2, 3, 4, 5}, nil
+	}
+	// execAsyncFn tracks parallelism
+	node.asyncNode.execAsyncFn = func(ctx context.Context, v any) (any, error) {
+		cur := inFlight.Add(1)
+		if cur > maxSeen.Load() {
+			maxSeen.Store(cur)
+		}
+		// simulate work
+		time.Sleep(20 * time.Millisecond)
+		inFlight.Add(-1)
+		return v.(int) * 2, nil
+	}
 
-    res := <-node.RunAsync(context.Background(), nil)
-    if res.Err != nil {
-        t.Fatalf("unexpected error: %v", res.Err)
-    }
-    out, ok := res.Output.([]any)
-    if !ok {
-        t.Fatalf("expected []any, got %T", res.Output)
-    }
-    // check correctness
-    for i, v := range out {
-        if v.(int) != (i+1)*2 {
-            t.Errorf("index %d: got %v, want %v", i, v, (i+1)*2)
-        }
-    }
-    // ensure we saw true parallelism
-    if maxSeen.Load() <= 1 {
-        t.Errorf("parallelism not observed; max in-flight was %d", maxSeen.Load())
-    }
+	res := <-node.RunAsync(context.Background(), nil)
+	if res.Err != nil {
+		t.Fatalf("unexpected error: %v", res.Err)
+	}
+	out, ok := res.Output.([]any)
+	if !ok {
+		t.Fatalf("expected []any, got %T", res.Output)
+	}
+	// check correctness
+	for i, v := range out {
+		if v.(int) != (i+1)*2 {
+			t.Errorf("index %d: got %v, want %v", i, v, (i+1)*2)
+		}
+	}
+	// ensure we saw true parallelism
+	if maxSeen.Load() <= 1 {
+		t.Errorf("parallelism not observed; max in-flight was %d", maxSeen.Load())
+	}
 }
 
+func TestConditionalBranching(t *testing.T) {
+	var buf bytes.Buffer
 
+	// Create nodes that will be connected with conditional branches
+	nodeA := NewEcho("Node A", &buf)
+	nodeB := NewEcho("Node B", &buf)
+	nodeC := NewEcho("Node C", &buf)
+
+	// Create a custom node that can return different actions
+	branchNode := NewNode(1, 0)
+	branchNode.execFn = func(any) (any, error) {
+		return "branch_to_c", nil // This will make the flow go to nodeC
+	}
+	// Override postFn to return a specific action
+	branchNode.baseNode.postFn = func(shared, p, e any) (Action, error) {
+		return e.(string), nil
+	}
+
+	// Connect nodes with different actions
+	nodeA.Then(branchNode)
+	branchNode.Next("branch_to_b", nodeB)
+	branchNode.Next("branch_to_c", nodeC)
+
+	// Run the flow
+	_, err := NewFlow(nodeA).Run(nil)
+	if err != nil {
+		t.Fatalf("flow execution failed: %v", err)
+	}
+
+	// Verify the output shows nodeA and nodeC executed, but not nodeB
+	expected := "Node A\nNode C\n"
+	if buf.String() != expected {
+		t.Fatalf("expected output %q, got %q", expected, buf.String())
+	}
+}

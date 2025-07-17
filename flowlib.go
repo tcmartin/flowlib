@@ -47,6 +47,7 @@ type baseNode struct {
 	params     map[string]any
 	successors map[Action]Node
 	prepFn     func(any) (any, error)
+	postFn     func(shared, p, e any) (Action, error)
 }
 
 func newBaseNode() baseNode {
@@ -54,6 +55,7 @@ func newBaseNode() baseNode {
 		params:     map[string]any{},
 		successors: map[Action]Node{},
 		prepFn:     func(any) (any, error) { return nil, nil },
+		postFn:     func(shared, p, e any) (Action, error) { return DefaultAction, nil },
 	}
 }
 
@@ -65,7 +67,7 @@ func (b *baseNode) Then(n Node) Node              { return b.Next(DefaultAction,
 func (b *baseNode) prep(shared any) (any, error)  { return b.prepFn(shared) }
 func (b *baseNode) exec(prepRes any) (any, error) { return nil, nil }
 func (b *baseNode) post(shared, p, e any) (Action, error) {
-	return DefaultAction, nil
+	return b.postFn(shared, p, e)
 }
 func (b *baseNode) Run(shared any) (Action, error) {
 	return DefaultAction, nil // overridden by NodeWithRetry
