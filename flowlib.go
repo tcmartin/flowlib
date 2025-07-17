@@ -80,7 +80,9 @@ type NodeWithRetry struct {
 	MaxRetries int
 	Wait       time.Duration
 }
-
+func (n *NodeWithRetry) Run(shared any) (Action, error) {
+    return n._run(shared)
+}
 func NewNode(maxRetries int, wait time.Duration) *NodeWithRetry {
 	return &NodeWithRetry{baseNode: newBaseNode(), MaxRetries: maxRetries, Wait: wait}
 }
