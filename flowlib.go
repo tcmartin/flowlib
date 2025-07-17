@@ -158,7 +158,8 @@ func (f *Flow) _orch(shared any, params map[string]any) (Action, error) {
 	var err error
 	for curr != nil {
 		curr.SetParams(params)
-		last, err = curr.(*baseNode)._run(shared)
+		//last, err = curr.(*baseNode)._run(shared)
+		last, err = curr.Run(shared)
 		if err != nil {
 			return last, err
 		}
