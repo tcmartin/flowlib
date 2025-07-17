@@ -143,4 +143,58 @@ func TestCancelAsync(t *testing.T) {
 		t.Fatalf("expected context cancellation error")
 	}
 }
+func TestBatchNodeSerial(t *testing.T) {
+    input := []any{1, 2, 3}
+    // create a BatchNode and inject a doubling execFn
+    node := NewBatchNode(1, 0)
+    node.execFn = func(x any) (any, error) {
+        i, ok := x.(int)
+        if !ok {
+            t.Fatalf("expected int, got %T", x)
+        }
+        return i * 2, nil
+    }
+
+    // call the internal exec method directly
+    result, err := node.exec(input)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    // verify the result is a []any with each element doubled
+    arr, ok := result.([]any)
+    if !ok {
+        t.Fatalf("expected []any, got %T", result)
+    }
+    for i, v := range arr {
+        want := (i + 1) * 2
+        if v.(int) != want {
+            t.Errorf("at index %d: got %v, want %v", i, v, want)
+        }
+    }
+}
+func TestAsyncBatchNodeSerial(t *testing.T) {
+    // we'll count how many items get processed
+    var processed int32
+    node := NewAsyncBatchNode(1, 0)
+
+    // prep returns a slice of 3 ints
+    node.asyncNode.prepFn = func(_ any) (any, error) {
+        return []any{1, 2, 3}, nil
+    }
+    // execAsyncFn increments the counter
+    node.asyncNode.execAsyncFn = func(ctx context.Context, v any) (any, error) {
+        atomic.AddInt32(&processed, 1)
+        return nil, nil
+    }
+
+    // run the node directly as an AsyncNode
+    res := <-node.RunAsync(context.Background(), nil)
+    if res.Err != nil {
+        t.Fatalf("unexpected error: %v", res.Err)
+    }
+    if processed != 3 {
+        t.Fatalf("expected 3 items processed, got %d", processed)
+    }
+}
 
