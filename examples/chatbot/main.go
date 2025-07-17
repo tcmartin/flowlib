@@ -5,20 +5,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/tcmartin/flowlib"
 )
-
-// ChatNode handles a conversation loop
-type ChatNode struct {
-	*flowlib.NodeWithRetry
-	client LLMClient
-}
-
-// LLMClient interface for any LLM service
-type LLMClient interface {
-	Complete(messages []Message) (string, error)
-}
 
 // Message represents a chat message
 type Message struct {
@@ -26,27 +16,40 @@ type Message struct {
 	Content string
 }
 
-func NewChatNode(client LLMClient) *ChatNode {
-	c := &ChatNode{
-		NodeWithRetry: flowlib.NewNode(1, 0),
-		client:        client,
-	}
-	c.execFn = c.Exec
-	c.baseNode.prepFn = c.Prep
-	c.baseNode.postFn = c.Post
-	return c
+// LLMClient interface for any LLM service
+type LLMClient interface {
+	Complete(messages []Message) (string, error)
 }
 
-func (c *ChatNode) Prep(shared any) (any, error) {
-	// Initialize shared state if needed
-	sharedMap, ok := shared.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("expected shared to be map[string]any, got %T", shared)
-	}
+// ChatNode implements the flowlib.Node interface directly
+type ChatNode struct {
+	params     map[string]any
+	successors map[flowlib.Action]flowlib.Node
+	client     LLMClient
+}
 
-	// Initialize messages if this is the first run
-	if _, exists := sharedMap["messages"]; !exists {
-		sharedMap["messages"] = []Message{}
+func NewChatNode(client LLMClient) *ChatNode {
+	return &ChatNode{
+		params:     make(map[string]any),
+		successors: make(map[flowlib.Action]flowlib.Node),
+		client:     client,
+	}
+}
+
+// Implement Node interface methods
+func (c *ChatNode) SetParams(p map[string]any)                  { c.params = p }
+func (c *ChatNode) Params() map[string]any                      { return c.params }
+func (c *ChatNode) Successors() map[flowlib.Action]flowlib.Node { return c.successors }
+func (c *ChatNode) Next(a flowlib.Action, n flowlib.Node) flowlib.Node {
+	c.successors[a] = n
+	return n
+}
+
+// Run implements the core chat logic
+func (c *ChatNode) Run(shared any) (flowlib.Action, error) {
+	// If this is the first run, initialize messages
+	if _, exists := c.params["messages"]; !exists {
+		c.params["messages"] = []Message{}
 		fmt.Println("Welcome to the chat! Type 'exit' to end the conversation.")
 	}
 
@@ -58,60 +61,67 @@ func (c *ChatNode) Prep(shared any) (any, error) {
 
 	// Check if user wants to exit
 	if strings.ToLower(userInput) == "exit" {
-		return nil, nil // Signal to end conversation
-	}
-
-	// Add user message to history
-	messages := sharedMap["messages"].([]Message)
-	messages = append(messages, Message{Role: "user", Content: userInput})
-	sharedMap["messages"] = messages
-
-	return messages, nil
-}
-
-func (c *ChatNode) Exec(p any) (any, error) {
-	messages, ok := p.([]Message)
-	if !ok {
-		return nil, nil // End conversation
-	}
-
-	// Call LLM with the conversation history
-	response, err := c.client.Complete(messages)
-	if err != nil {
-		return nil, err
-	}
-
-	return response, nil
-}
-
-func (c *ChatNode) Post(shared, p, e any) (flowlib.Action, error) {
-	if p == nil || e == nil {
 		fmt.Println("\nGoodbye!")
 		return "", nil // End the conversation
 	}
 
-	sharedMap := shared.(map[string]any)
-	response := e.(string)
+	// Add user message to history
+	messages, _ := c.params["messages"].([]Message)
+	messages = append(messages, Message{Role: "user", Content: userInput})
+	c.params["messages"] = messages
+
+	// Call LLM with the conversation history
+	response, err := c.client.Complete(messages)
+	if err != nil {
+		return "", err
+	}
 
 	// Print the assistant's response
 	fmt.Printf("\nAssistant: %s\n", response)
 
 	// Add assistant message to history
-	messages := sharedMap["messages"].([]Message)
 	messages = append(messages, Message{Role: "assistant", Content: response})
-	sharedMap["messages"] = messages
+	c.params["messages"] = messages
 
-	// Loop back to continue the conversation
+	// Return the action to continue the conversation
 	return "continue", nil
 }
 
-// Simple mock LLM client for demonstration
+// MockLLMClient provides realistic-looking responses
 type MockLLMClient struct{}
 
 func (m *MockLLMClient) Complete(messages []Message) (string, error) {
-	// In a real implementation, this would call an actual LLM API
+	// Get the last user message
 	lastMessage := messages[len(messages)-1].Content
-	return fmt.Sprintf("You said: %s. This is a mock response.", lastMessage), nil
+
+	// Simulate thinking time
+	time.Sleep(500 * time.Millisecond)
+
+	// Generate a response based on the user's input
+	lowercaseInput := strings.ToLower(lastMessage)
+
+	if strings.Contains(lowercaseInput, "hello") || strings.Contains(lowercaseInput, "hi") {
+		return "Hello there! How can I help you today?", nil
+	} else if strings.Contains(lowercaseInput, "how are you") {
+		return "I'm just a simple AI assistant, but I'm functioning well! How are you doing?", nil
+	} else if strings.Contains(lowercaseInput, "name") {
+		return "I'm a chatbot built with flowlib, a lightweight workflow engine for Go.", nil
+	} else if strings.Contains(lowercaseInput, "weather") {
+		return "I don't have access to real-time weather data, but I hope it's nice where you are!", nil
+	} else if strings.Contains(lowercaseInput, "joke") {
+		return "Why don't scientists trust atoms? Because they make up everything!", nil
+	} else if strings.Contains(lowercaseInput, "thank") {
+		return "You're welcome! Is there anything else I can help with?", nil
+	} else if strings.Contains(lowercaseInput, "bye") {
+		return "Goodbye! Have a great day!", nil
+	} else if strings.Contains(lowercaseInput, "flowlib") {
+		return "Flowlib is a single-file, dependency-free workflow/agent engine for Go. It's lightweight, expressive, and perfect for building systems like me!", nil
+	} else if strings.Contains(lowercaseInput, "help") {
+		return "I can chat about various topics, tell jokes, or explain what flowlib is. What would you like to know?", nil
+	}
+
+	// Default response for anything else
+	return fmt.Sprintf("You said: \"%s\". That's interesting! Can you tell me more?", lastMessage), nil
 }
 
 func main() {
@@ -123,6 +133,5 @@ func main() {
 
 	// Create and run the flow
 	flow := flowlib.NewFlow(chatNode)
-	shared := make(map[string]any)
-	flow.Run(shared)
+	flow.Run(nil)
 }
