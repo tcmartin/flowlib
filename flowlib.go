@@ -1,11 +1,11 @@
 // Package flowlib is a minimal, single-file workflow/agent runtime.
 //
-//  • BaseNode / NodeWithRetry
-//  • BatchNode (serial map)
-//  • AsyncBatchNode (serial async)
-//  • AsyncParallelBatchNode (fan-out all items)
-//  • WorkerPoolBatchNode (bounded goroutine pool)
-//  • Flow / AsyncFlow orchestrators with branching
+//   - BaseNode / NodeWithRetry
+//   - BatchNode (serial map)
+//   - AsyncBatchNode (serial async)
+//   - AsyncParallelBatchNode (fan-out all items)
+//   - WorkerPoolBatchNode (bounded goroutine pool)
+//   - Flow / AsyncFlow orchestrators with branching
 //
 // No external dependencies: only the Go standard library.
 package flowlib
@@ -57,13 +57,13 @@ func newBaseNode() baseNode {
 	}
 }
 
-func (b *baseNode) SetParams(p map[string]any)       { b.params = p }
-func (b *baseNode) Params() map[string]any           { return b.params }
-func (b *baseNode) Successors() map[Action]Node      { return b.successors }
-func (b *baseNode) Next(a Action, n Node) Node       { b.successors[a] = n; return n }
-func (b *baseNode) Then(n Node) Node                 { return b.Next(DefaultAction, n) }
-func (b *baseNode) prep(shared any) (any, error)     { return b.prepFn(shared) }
-func (b *baseNode) exec(prepRes any) (any, error)    { return nil, nil }
+func (b *baseNode) SetParams(p map[string]any)    { b.params = p }
+func (b *baseNode) Params() map[string]any        { return b.params }
+func (b *baseNode) Successors() map[Action]Node   { return b.successors }
+func (b *baseNode) Next(a Action, n Node) Node    { b.successors[a] = n; return n }
+func (b *baseNode) Then(n Node) Node              { return b.Next(DefaultAction, n) }
+func (b *baseNode) prep(shared any) (any, error)  { return b.prepFn(shared) }
+func (b *baseNode) exec(prepRes any) (any, error) { return nil, nil }
 func (b *baseNode) post(shared, p, e any) (Action, error) {
 	return DefaultAction, nil
 }
@@ -128,6 +128,34 @@ type BatchNode struct{ *NodeWithRetry }
 
 func NewBatchNode(r int, w time.Duration) *BatchNode { return &BatchNode{NewNode(r, w)} }
 
+func (bn *BatchNode) Run(shared any) (Action, error) {
+	// 1) Prep
+	p, err := bn.prep(shared)
+	if err != nil {
+		return "", err
+	}
+	// 2) Exec w/ retry
+	var e any
+	for i := 0; i < max(1, bn.MaxRetries); i++ {
+		e, err = bn.exec(p)
+		if err == nil {
+			break
+		}
+		if i == bn.MaxRetries-1 {
+			e, err = bn.ExecFallback(p, err)
+			break
+		}
+		if bn.Wait > 0 {
+			time.Sleep(bn.Wait)
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	// 3) Post
+	return bn.post(shared, p, e)
+}
+
 func (bn *BatchNode) exec(items any) (any, error) {
 	slice, ok := items.([]any)
 	if !ok {
@@ -182,8 +210,9 @@ func (f *Flow) Run(shared any) (Action, error) {
 /* ---------- Async primitives ---------- */
 
 type Result struct {
-	Act Action
-	Err error
+	Act    Action
+	Output any
+	Err    error
 }
 
 type AsyncNode interface {
@@ -210,7 +239,7 @@ func (an *asyncNode) RunAsync(ctx context.Context, shared any) <-chan Result {
 		// Prep
 		p, err := an.prep(shared)
 		if err != nil {
-			ch <- Result{"", err}
+			ch <- Result{"", nil, err}
 			return
 		}
 		// Exec w/ retry
@@ -226,18 +255,18 @@ func (an *asyncNode) RunAsync(ctx context.Context, shared any) <-chan Result {
 			}
 			select {
 			case <-ctx.Done():
-				ch <- Result{"", ctx.Err()}
+				ch <- Result{"", nil, ctx.Err()}
 				return
 			case <-time.After(an.Wait):
 			}
 		}
 		if err != nil {
-			ch <- Result{"", err}
+			ch <- Result{"", nil, err}
 			return
 		}
 		// Post
 		act, _ := an.PostAsync(ctx, shared, p, e)
-		ch <- Result{act, nil}
+		ch <- Result{act, e, nil}
 	}()
 	return ch
 }
@@ -258,41 +287,43 @@ func (an *asyncNode) ExecFallbackAsync(ctx context.Context, p any, err error) (a
 /* ---------- Batch & ParallelBatch ---------- */
 
 type AsyncBatchNode struct{ *asyncNode }
+
 func NewAsyncBatchNode(r int, w time.Duration) *AsyncBatchNode {
 	return &AsyncBatchNode{NewAsyncNode(r, w)}
 }
 
 // Serial
 func (ab *AsyncBatchNode) RunAsync(ctx context.Context, shared any) <-chan Result {
-    ch := make(chan Result, 1)
-    go func() {
-        defer close(ch)
-        // 1) Prep step
-        p, err := ab.prep(shared)
-        if err != nil {
-            ch <- Result{"", err}
-            return
-        }
-        // 2) Expect a slice
-        list, ok := p.([]any)
-        if !ok {
-            ch <- Result{"", fmt.Errorf("AsyncBatchNode expects []any, got %T", p)}
-            return
-        }
-        // 3) Execute each item, in sequence
-        for _, v := range list {
-            if _, err := ab.execAsyncFn(ctx, v); err != nil {
-                ch <- Result{"", err}
-                return
-            }
-        }
-        // 4) All done
-        ch <- Result{DefaultAction, nil}
-    }()
-    return ch
+	ch := make(chan Result, 1)
+	go func() {
+		defer close(ch)
+		// 1) Prep step
+		p, err := ab.prep(shared)
+		if err != nil {
+			ch <- Result{"", nil, err}
+			return
+		}
+		// 2) Expect a slice
+		list, ok := p.([]any)
+		if !ok {
+			ch <- Result{"", nil, fmt.Errorf("AsyncBatchNode expects []any, got %T", p)}
+			return
+		}
+		// 3) Execute each item, in sequence
+		for _, v := range list {
+			if _, err := ab.execAsyncFn(ctx, v); err != nil {
+				ch <- Result{"", nil, err}
+				return
+			}
+		}
+		// 4) All done
+		ch <- Result{DefaultAction, nil, nil}
+	}()
+	return ch
 }
 
 type AsyncParallelBatchNode struct{ *asyncNode }
+
 func NewAsyncParallelBatchNode(r int, w time.Duration) *AsyncParallelBatchNode {
 	return &AsyncParallelBatchNode{NewAsyncNode(r, w)}
 }
@@ -304,13 +335,13 @@ func (ap *AsyncParallelBatchNode) RunAsync(ctx context.Context, shared any) <-ch
 		// Prep
 		p, err := ap.prep(shared)
 		if err != nil {
-			ch <- Result{"", err}
+			ch <- Result{"", nil, err}
 			return
 		}
 		// Expect p to be []any
 		list, ok := p.([]any)
 		if !ok {
-			ch <- Result{"", fmt.Errorf("expected []any")} 
+			ch <- Result{"", nil, fmt.Errorf("expected []any")}
 			return
 		}
 		out := make([]any, len(list))
@@ -335,9 +366,9 @@ func (ap *AsyncParallelBatchNode) RunAsync(ctx context.Context, shared any) <-ch
 		wg.Wait()
 		select {
 		case e := <-errCh:
-			ch <- Result{"", e}
+			ch <- Result{"", nil, e}
 		default:
-			ch <- Result{DefaultAction, nil}
+			ch <- Result{DefaultAction, out, nil}
 		}
 	}()
 	return ch
@@ -362,19 +393,19 @@ func NewWorkerPoolBatchNode(r int, wait time.Duration, maxPar int) *WorkerPoolBa
 
 func (wp *WorkerPoolBatchNode) RunAsync(ctx context.Context, shared any) <-chan Result {
 	ch := make(chan Result, 1)
-	
+
 	go func() {
 		defer close(ch)
 
 		// 1) Prep
 		p, err := wp.prep(shared)
 		if err != nil {
-			ch <- Result{"", err}
+			ch <- Result{"", nil, err}
 			return
 		}
 		list, ok := p.([]any)
 		if !ok {
-			ch <- Result{"", fmt.Errorf("WorkerPoolBatch expects []any, got %T", p)}
+			ch <- Result{"", nil, fmt.Errorf("WorkerPoolBatch expects []any, got %T", p)}
 			return
 		}
 
@@ -388,7 +419,7 @@ func (wp *WorkerPoolBatchNode) RunAsync(ctx context.Context, shared any) <-chan 
 			// check cancellation before scheduling
 			select {
 			case <-ctx.Done():
-				ch <- Result{"", ctx.Err()}
+				ch <- Result{"", nil, ctx.Err()}
 				return
 			default:
 			}
@@ -422,7 +453,7 @@ func (wp *WorkerPoolBatchNode) RunAsync(ctx context.Context, shared any) <-chan 
 
 		select {
 		case <-ctx.Done():
-			ch <- Result{"", ctx.Err()}
+			ch <- Result{"", nil, ctx.Err()}
 			return
 		case <-done:
 		}
@@ -430,9 +461,9 @@ func (wp *WorkerPoolBatchNode) RunAsync(ctx context.Context, shared any) <-chan 
 		// 4) Check for errors
 		select {
 		case e := <-errCh:
-			ch <- Result{"", e}
+			ch <- Result{"", nil, e}
 		default:
-			ch <- Result{DefaultAction, nil}
+			ch <- Result{DefaultAction, out, nil}
 		}
 	}()
 
@@ -460,13 +491,12 @@ func (af *AsyncFlow) RunAsync(ctx context.Context, shared any) <-chan Result {
 				last, err = curr.Run(shared)
 			}
 			if err != nil {
-				ch <- Result{"", err}
+				ch <- Result{"", nil, err}
 				return
 			}
 			curr = af.getNext(curr, last)
 		}
-		ch <- Result{last, nil}
+		ch <- Result{last, nil, nil}
 	}()
 	return ch
 }
-

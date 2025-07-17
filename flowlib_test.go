@@ -197,4 +197,45 @@ func TestAsyncBatchNodeSerial(t *testing.T) {
         t.Fatalf("expected 3 items processed, got %d", processed)
     }
 }
+func TestAsyncParallelBatchNodeFanOut(t *testing.T) {
+    var maxSeen atomic.Int32
+    var inFlight atomic.Int32
+
+    node := NewAsyncParallelBatchNode(1, 0)
+    // prep yields 5 items
+    node.asyncNode.prepFn = func(_ any) (any, error) {
+        return []any{1, 2, 3, 4, 5}, nil
+    }
+    // execAsyncFn tracks parallelism
+    node.asyncNode.execAsyncFn = func(ctx context.Context, v any) (any, error) {
+        cur := inFlight.Add(1)
+        if cur > maxSeen.Load() {
+            maxSeen.Store(cur)
+        }
+        // simulate work
+        time.Sleep(20 * time.Millisecond)
+        inFlight.Add(-1)
+        return v.(int) * 2, nil
+    }
+
+    res := <-node.RunAsync(context.Background(), nil)
+    if res.Err != nil {
+        t.Fatalf("unexpected error: %v", res.Err)
+    }
+    out, ok := res.Output.([]any)
+    if !ok {
+        t.Fatalf("expected []any, got %T", res.Output)
+    }
+    // check correctness
+    for i, v := range out {
+        if v.(int) != (i+1)*2 {
+            t.Errorf("index %d: got %v, want %v", i, v, (i+1)*2)
+        }
+    }
+    // ensure we saw true parallelism
+    if maxSeen.Load() <= 1 {
+        t.Errorf("parallelism not observed; max in-flight was %d", maxSeen.Load())
+    }
+}
+
 
