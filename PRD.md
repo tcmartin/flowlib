@@ -44,18 +44,52 @@ The library must compile with **Go 1.18+** and be import‑able as `github.com/
 
 ### 4 — Quality goals & Test coverage
 
-| Area                   | Accept / Reject criteria                                                      | Unit tests (current)                     |
-| ---------------------- | ----------------------------------------------------------------------------- | ---------------------------------------- |
-| **Sync traversal**     | Nodes execute in declared order; `Then` wires default edge.                   | `TestSyncFlow` prints `Hello World`.     |
-| **Retry logic**        | `Exec` retried until success; fallback called on final failure.               | `TestRetry` fails twice then succeeds.   |
-| **Worker‑pool batch**  | Processes every element exactly once; never exceeds `MaxParallel` goroutines. | `TestWorkerPoolBatch` counts 4 items.    |
-| **Async cancellation** | Flow aborts with `ctx.Err()` when context deadline hits.                      | `TestCancelAsync` expects non‑nil error. |
+| Area                          | Accept / Reject criteria                                               | Unit tests (existing) | Unit tests (to add)                |
+| ----------------------------- | ---------------------------------------------------------------------- | --------------------- | ---------------------------------- |
+| **Sync traversal**            | Nodes execute in declared order; `Then` wires default edge.            | `TestSyncFlow`        |                                    |
+| **Retry logic**               | `Exec` retried until success; fallback called on final failure.        | `TestRetry`           |                                    |
+| **BatchNode (serial)**        | Processes a slice serially, returns transformed slice, no concurrency. |                       | `TestBatchNodeSerial`              |
+| **AsyncBatchNode (serial)**   | Processes a slice one-by-one asynchronously, respects `ctx.Done()`.    |                       | `TestAsyncBatchNodeSerial`         |
+| **AsyncParallelBatchNode**    | Processes slice in parallel (`goroutine per item`), collects outputs.  |                       | `TestAsyncParallelBatchNodeFanOut` |
+| **Worker‑pool batch**         | Processes every element exactly once; never exceeds `MaxParallel`.     | `TestWorkerPoolBatch` |                                    |
+| **Async cancellation**        | Flow aborts with `ctx.Err()` when context deadline hits.               | `TestCancelAsync`     |                                    |
+| **Conditional branching**     | Nodes returning non-default actions follow correct successor edges.    |                       | `TestConditionalBranching`         |
+| **Missing successor warning** | Warning emitted and flow ends when no successor for returned action.   |                       | `TestMissingSuccessorWarning`      |
+| **Param propagation**         | Per-node params set and accessible within `Run` for custom nodes.      |                       | `TestParamPropagationAndIsolation` |
 
-> **Note:** Tests deliberately avoid `params` mutation to isolate engine behaviour.
+> **Note:** Tests deliberately avoid `params` mutation in engine to isolate core behaviour.
+
+### 5 — Milestone checklist
+
+* [x] Single‑file library compiles (Go ≥ 1.18).
+* [x] Public API: `Node`, `AsyncNode`, `Flow`, `AsyncFlow`.
+* [x] Unit tests green via `go test ./...`.
+* [ ] Tag `v0.1.0` after tests pass in CI.
+
+### 6 — Next steps (post‑MVP)
+
+1. **Stabilise** API, add godoc comments.
+2. **flowrunner**: YAML loader + CLI harness.
+3. Introduce logging interceptor & metrics hooks.
+4. Optional: Parallel DAG execution (`ParallelFlow`).
 
 ---
 
-### 5 — Milestone checklist
+> *Flowlib aims to stay tiny. Bigger features live in higher‑level projects.*
+
+### 7 — Test stubs
+
+```go
+// In flowlib_test.go:
+func TestBatchNodeSerial(t *testing.T) { /*...*/ }
+func TestAsyncBatchNodeSerial(t *testing.T) { /*...*/ }
+func TestAsyncParallelBatchNodeFanOut(t *testing.T) { /*...*/ }
+func TestConditionalBranching(t *testing.T) { /*...*/ }
+func TestMissingSuccessorWarning(t *testing.T) { /*...*/ }
+func TestParamPropagationAndIsolation(t *testing.T) { /*...*/ }
+```
+
+Implementation of these stubs will ensure full coverage of core behaviors. — Milestone checklist
 
 * [x] Single‑file library compiles (Go ≥ 1.18).
 * [x] Public API: `Node`, `AsyncNode`, `Flow`, `AsyncFlow`.
