@@ -44,22 +44,40 @@ The library must compile with **Go 1.18+** and be import‑able as `github.com/
 
 ### 4 — Quality goals & Test coverage
 
-| Area                          | Accept / Reject criteria                                               | Unit tests (existing) | Unit tests (to add)                |
-| ----------------------------- | ---------------------------------------------------------------------- | --------------------- | ---------------------------------- |
-| **Sync traversal**            | Nodes execute in declared order; `Then` wires default edge.            | `TestSyncFlow`        |                                    |
-| **Retry logic**               | `Exec` retried until success; fallback called on final failure.        | `TestRetry`           |                                    |
-| **BatchNode (serial)**        | Processes a slice serially, returns transformed slice, no concurrency. |                       | `TestBatchNodeSerial`              |
-| **AsyncBatchNode (serial)**   | Processes a slice one-by-one asynchronously, respects `ctx.Done()`.    |                       | `TestAsyncBatchNodeSerial`         |
-| **AsyncParallelBatchNode**    | Processes slice in parallel (`goroutine per item`), collects outputs.  |                       | `TestAsyncParallelBatchNodeFanOut` |
-| **Worker‑pool batch**         | Processes every element exactly once; never exceeds `MaxParallel`.     | `TestWorkerPoolBatch` |                                    |
-| **Async cancellation**        | Flow aborts with `ctx.Err()` when context deadline hits.               | `TestCancelAsync`     |                                    |
-| **Conditional branching**     | Nodes returning non-default actions follow correct successor edges.    |                       | `TestConditionalBranching`         |
-| **Missing successor warning** | Warning emitted and flow ends when no successor for returned action.   |                       | `TestMissingSuccessorWarning`      |
-| **Param propagation**         | Per-node params set and accessible within `Run` for custom nodes.      |                       | `TestParamPropagationAndIsolation` |
+| Area                          | Accept / Reject criteria                                               | Unit tests (existing)              | Unit tests (to add) |
+| ----------------------------- | ---------------------------------------------------------------------- | ---------------------------------- | ------------------- |
+| **Sync traversal**            | Nodes execute in declared order; `Then` wires default edge.            | `TestSyncFlow`                     |                     |
+| **Retry logic**               | `Exec` retried until success; fallback called on final failure.        | `TestRetry`                        |                     |
+| **BatchNode (serial)**        | Processes a slice serially, returns transformed slice, no concurrency. | `TestBatchNodeSerial`              |                     |
+| **AsyncBatchNode (serial)**   | Processes a slice one-by-one asynchronously, respects `ctx.Done()`.    | `TestAsyncBatchNodeSerial`         |                     |
+| **AsyncParallelBatchNode**    | Processes slice in parallel (`goroutine per item`), collects outputs.  | `TestAsyncParallelBatchNodeFanOut` |                     |
+| **Worker‑pool batch**         | Processes every element exactly once; never exceeds `MaxParallel`.     | `TestWorkerPoolBatch`              |                     |
+| **Async cancellation**        | Flow aborts with `ctx.Err()` when context deadline hits.               | `TestCancelAsync`                  |                     |
+| **Conditional branching**     | Nodes returning non-default actions follow correct successor edges.    | `TestConditionalBranching`         |                     |
+| **Missing successor warning** | Warning emitted and flow ends when no successor for returned action.   | `TestMissingSuccessorWarning`      |                     |
+| **Param propagation**         | Per-node params set and accessible within `Run` for custom nodes.      | `TestParamPropagationAndIsolation` |                     |
 
-> **Note:** Tests deliberately avoid `params` mutation in engine to isolate core behaviour.
+*All listed tests are now implemented and passing.*
 
 ### 5 — Milestone checklist
+
+* [x] Single‑file library compiles (Go ≥ 1.18).
+* [x] Public API: `Node`, `AsyncNode`, `Flow`, `AsyncFlow`.
+* [x] Unit tests green via `go test ./...`.
+* [ ] Tag `v0.1.0` after tests pass in CI.
+
+### 6 — Next steps (post‑MVP)
+
+1. **Stabilise** API, add godoc comments.
+2. **flowrunner**: YAML loader + CLI harness.
+3. Introduce logging interceptor & metrics hooks.
+4. Optional: Parallel DAG execution (`ParallelFlow`).
+
+---
+
+> *Flowlib aims to stay tiny. Bigger features live in higher‑level projects.*
+
+ — Milestone checklist
 
 * [x] Single‑file library compiles (Go ≥ 1.18).
 * [x] Public API: `Node`, `AsyncNode`, `Flow`, `AsyncFlow`.
