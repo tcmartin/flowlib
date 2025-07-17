@@ -318,7 +318,7 @@ func (ap *AsyncParallelBatchNode) RunAsync(ctx context.Context, shared any) <-ch
 	return ch
 }
 
-/* ---------- WorkerPoolBatchNode ---------- */
+/* ---------- WorkerPoolBatchNode (with cancellation) ---------- */
 
 type WorkerPoolBatchNode struct {
 	*asyncNode
@@ -337,8 +337,11 @@ func NewWorkerPoolBatchNode(r int, wait time.Duration, maxPar int) *WorkerPoolBa
 
 func (wp *WorkerPoolBatchNode) RunAsync(ctx context.Context, shared any) <-chan Result {
 	ch := make(chan Result, 1)
+	
 	go func() {
 		defer close(ch)
+
+		// 1) Prep
 		p, err := wp.prep(shared)
 		if err != nil {
 			ch <- Result{"", err}
@@ -346,32 +349,60 @@ func (wp *WorkerPoolBatchNode) RunAsync(ctx context.Context, shared any) <-chan 
 		}
 		list, ok := p.([]any)
 		if !ok {
-			ch <- Result{"", fmt.Errorf("expected []any")}
+			ch <- Result{"", fmt.Errorf("WorkerPoolBatch expects []any, got %T", p)}
 			return
 		}
-		out := make([]any, len(list))
+
+		// 2) Launch worker‐pool
 		sem := make(chan struct{}, wp.MaxParallel)
 		var wg sync.WaitGroup
 		errCh := make(chan error, 1)
+		out := make([]any, len(list))
+
 		for i, v := range list {
-			i, v := i, v
+			// check cancellation before scheduling
+			select {
+			case <-ctx.Done():
+				ch <- Result{"", ctx.Err()}
+				return
+			default:
+			}
+
 			wg.Add(1)
 			sem <- struct{}{}
-			go func() {
+
+			go func(idx int, item any) {
 				defer wg.Done()
-				res, e := wp.execAsyncFn(ctx, v)
+				defer func() { <-sem }()
+
+				// perform the work (execAsyncFn honors ctx internally if implemented)
+				res, e := wp.execAsyncFn(ctx, item)
 				if e != nil {
 					select {
 					case errCh <- e:
 					default:
 					}
-				} else {
-					out[i] = res
+					return
 				}
-				<-sem
-			}()
+				out[idx] = res
+			}(i, v)
 		}
-		wg.Wait()
+
+		// 3) Wait for all workers or cancellation
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-ctx.Done():
+			ch <- Result{"", ctx.Err()}
+			return
+		case <-done:
+		}
+
+		// 4) Check for errors
 		select {
 		case e := <-errCh:
 			ch <- Result{"", e}
@@ -379,6 +410,7 @@ func (wp *WorkerPoolBatchNode) RunAsync(ctx context.Context, shared any) <-chan 
 			ch <- Result{DefaultAction, nil}
 		}
 	}()
+
 	return ch
 }
 
