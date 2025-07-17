@@ -264,7 +264,32 @@ func NewAsyncBatchNode(r int, w time.Duration) *AsyncBatchNode {
 
 // Serial
 func (ab *AsyncBatchNode) RunAsync(ctx context.Context, shared any) <-chan Result {
-	return NewAsyncNode(ab.MaxRetries, ab.Wait).RunAsync(ctx, shared)
+    ch := make(chan Result, 1)
+    go func() {
+        defer close(ch)
+        // 1) Prep step
+        p, err := ab.prep(shared)
+        if err != nil {
+            ch <- Result{"", err}
+            return
+        }
+        // 2) Expect a slice
+        list, ok := p.([]any)
+        if !ok {
+            ch <- Result{"", fmt.Errorf("AsyncBatchNode expects []any, got %T", p)}
+            return
+        }
+        // 3) Execute each item, in sequence
+        for _, v := range list {
+            if _, err := ab.execAsyncFn(ctx, v); err != nil {
+                ch <- Result{"", err}
+                return
+            }
+        }
+        // 4) All done
+        ch <- Result{DefaultAction, nil}
+    }()
+    return ch
 }
 
 type AsyncParallelBatchNode struct{ *asyncNode }
