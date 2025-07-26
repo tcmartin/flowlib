@@ -124,6 +124,133 @@ func (n *NodeWithRetry) Run(shared any) (Action, error) {
 	return n.post(shared, p, e)
 }
 
+/* ---------- AsyncSplitNode ---------- */
+
+type AsyncSplitNode struct {
+	baseNode
+}
+
+func NewAsyncSplitNode() *AsyncSplitNode {
+	return &AsyncSplitNode{newBaseNode()}
+}
+
+// RunAsync executes all successors in parallel and returns when all complete
+func (as *AsyncSplitNode) RunAsync(ctx context.Context, shared any) <-chan Result {
+	ch := make(chan Result, 1)
+	go func() {
+		defer close(ch)
+
+		successors := as.successors
+		if len(successors) == 0 {
+			warn("AsyncSplitNode has no successors")
+			ch <- Result{"", nil, nil}
+			return
+		}
+
+		var wg sync.WaitGroup
+		errCh := make(chan error, len(successors))
+
+		// Launch all successors in parallel
+		for action, n := range successors {
+			wg.Add(1)
+			go func(a Action, node Node) {
+				defer wg.Done()
+
+				var err error
+				if asyncNode, ok := node.(AsyncNode); ok {
+					r := <-asyncNode.RunAsync(ctx, shared)
+					err = r.Err
+				} else {
+					_, err = node.Run(shared)
+				}
+
+				if err != nil {
+					errCh <- fmt.Errorf("AsyncSplitNode action %q failed: %w", a, err)
+				}
+			}(action, n)
+		}
+
+		// Wait for all to complete or context cancellation
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-ctx.Done():
+			ch <- Result{"", nil, ctx.Err()}
+			return
+		case <-done:
+		}
+
+		// Check for any errors
+		close(errCh)
+		select {
+		case err := <-errCh:
+			ch <- Result{"", nil, err}
+		default:
+			ch <- Result{DefaultAction, nil, nil}
+		}
+	}()
+	return ch
+}
+
+// Run implements the Node interface for non-async usage
+func (as *AsyncSplitNode) Run(shared any) (Action, error) {
+	ctx := context.Background()
+	r := <-as.RunAsync(ctx, shared)
+	return r.Act, r.Err
+}
+
+/* ---------- SplitNode (parallel fan-out) ---------- */
+
+type SplitNode struct {
+	baseNode
+}
+
+func NewSplitNode() *SplitNode {
+	return &SplitNode{newBaseNode()}
+}
+
+// Run executes all successors in parallel and waits for them to complete.
+// This enables true fan-out behavior where multiple branches run simultaneously.
+func (s *SplitNode) Run(shared any) (Action, error) {
+	successors := s.successors
+	if len(successors) == 0 {
+		warn("SplitNode has no successors")
+		return "", nil
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(successors))
+
+	// Launch all successors in parallel
+	for action, n := range successors {
+		wg.Add(1)
+		go func(a Action, node Node) {
+			defer wg.Done()
+			_, err := node.Run(shared)
+			if err != nil {
+				errCh <- fmt.Errorf("SplitNode action %q failed: %w", a, err)
+			}
+		}(action, n)
+	}
+
+	// Wait for all to complete
+	wg.Wait()
+	close(errCh)
+
+	// Check for any errors
+	select {
+	case err := <-errCh:
+		return "", err
+	default:
+		// After split completes, continue with default action to next node
+		return DefaultAction, nil
+	}
+}
+
 /* ---------- BatchNode (serial) ---------- */
 
 type BatchNode struct{ *NodeWithRetry }
